@@ -224,12 +224,43 @@ class Libvirtd(Virt):
         else:
             return DomainListReport(self.config, self._listDomains(), self._remote_host_id())
 
+    def _lookupByIDHelper(self, domainID):
+        try:
+            domain = self.virt.lookupByID(domainID)
+        except libvirt.libvirtError as e:
+            if e.get_error_code() == libvirt.VIR_ERR_NO_DOMAIN:
+                # Domain not found, most likely it was just destroyed
+                return None
+            else:
+                # All other exceptions should be forwarded
+                raise
+
+        return domain
+
+    def _lookupByNameHelper(self, domainName):
+        try:
+            domain = self.virt.lookupByName(domainName)
+        except libvirt.libvirtError as e:
+            if e.get_error_code() == libvirt.VIR_ERR_NO_DOMAIN:
+                # Domain not found, most likely it was just destroyed
+                return None
+            else:
+                # All other exceptions should be forwarded
+                raise
+
+        return domain
+
     def _listDomains(self):
         domains = []
         try:
             # Active domains
             for domainID in self.virt.listDomainsID():
-                domain = self.virt.lookupByID(domainID)
+                domain = self._lookupByIDHelper(domainID)
+                if domain is None:
+                    # Domain not found, most likely it was just destroyed, ignoring
+                    self.logger.debug("Lookup for domain by ID %s failed, probably it was just destroyed, ignoring" % domainID)
+                    continue
+
                 if domain.UUIDString() == "00000000-0000-0000-0000-000000000000":
                     # Don't send Domain-0 on xen (zeroed uuid)
                     continue
@@ -237,7 +268,12 @@ class Libvirtd(Virt):
 
             # Non active domains
             for domainName in self.virt.listDefinedDomains():
-                domain = self.virt.lookupByName(domainName)
+                domain = self._lookupByNameHelper(domainName)
+                if domain is None:
+                    # Domain not found, most likely it was just destroyed, ignoring
+                    self.logger.debug("Lookup for domain by name '%s' failed, probably it was just destroyed, ignoring" % domainName)
+                    continue
+
                 domains.append(LibvirtdGuest(self, domain))
         except libvirt.libvirtError as e:
             self.virt.close()
